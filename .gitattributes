@@ -1,0 +1,2 @@
+twitch_downloader_cli/ffmpeg/*.exe filter=lfs diff=lfs merge=lfs -text
+twitch_downloader_cli/TwitchDownloaderCLI.exe filter=lfs diff=lfs merge=lfs -text
