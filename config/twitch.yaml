@@ -1,0 +1,151 @@
+twitch:
+  # The amount of seconds that need to be left before refreshing token
+  refresh_time_limit: 60
+
+  # Type of allowed streams; [live, playlist, watch_party, premiere, rerun]
+  allowed_stream_types: 
+    - live
+    - premiere
+    - watch_party
+
+vod_download:
+  # Amount of latest videos to fetch (Reccomended min 3; max 10)
+  latest_vods_amount: 5
+  # Cooldown for retrying fetching videos; in seconds
+  fetch_retry_cooldown: 30
+  # Max attempts to retry fetching videos; 0 = infinite
+  fetch_max_retries: 10
+
+  # Number of parallel download threads. Large values may result in IP rate limiting
+  download_threads: 4
+  # The maximum bandwidth a thread will be allowed to use (KB/s);
+  # Use bytes (10MB -> 10240 ); -1 for no maximum.
+  max_thread_bandwidth: 10240
+
+  vods:
+    # VOD Download format [mp4, m4a]
+    download_format: mp4
+    # VOD Download quality; If not found, will default to best
+    download_quality: 1080p60
+
+  chat:
+    # Format of chat download [json, html, txt]
+    download_format: json
+    # Compresses json chat file (usually 40-90% size reduction); [None, Gzip]
+    compression: None
+    # Embed emotes, badges, and cheermotes for offline rendering; File size will be larger. 
+    # You can toggle bttv, ffz and stv: [True/False]; they REQUIRE [embed-images: True]
+    embed_images: True
+    bttv: True    
+    ffz: True
+    stv: True
+    # Chat message timestamp format [Utc, UtcFull, Relative, None]
+    timestamp_format: Utc
+
+  chat_render:
+    # Enables the rendering of the chat in the download flow [True/False]; REQUIRES chat.download_format = json
+    enable_chat_render: True
+    # Render background color [RRGGBB or AARRGGBB]; in hexadecimal
+    background_color: 14141414
+    # Alternates background color of every other chat message; helps tell them apart
+    alternate_backgrounds: True
+    # Same as Render background, for alternated message; [RRGGBB or AARRGGBB]; in hexadecimal
+    # Requires alternate_background
+    alt_background_color: 19191919 
+    # Increase contrast of usernames for readability.
+    readable_colors: true
+    # Message Color [RRGGBB or AARRGGBB]; in hexadecimal
+    message_color: FBFAF5
+    # Render width and height
+    width: 350
+    height: 600
+    # Embed images rendering
+    bttv: True    
+    ffz: True
+    stv: True
+    # Allow Unlisted 7TV emotes
+    allow_unlisted_emotes: True
+    # Enable sub and re_sub messages
+    sub_messages: True
+    # Enable chat badges.
+    badges: True
+    # Enable outline around chat messages.
+    outline: True
+    # Size of outline if outline is enabled; in px
+    outline_size: 4
+    # Font Options
+    font: Inter Embedded
+    font_size: 12 
+    # Font style for message text [normal, bold, italic, bolditalic]
+    message_fontstyle: normal
+    # Font style for usernames [normal, bold, italic, bolditalic]
+    username_fontstyle: bold
+    # Show timestamps to the left of messages
+    timestamp: False
+    # Generate mask file alongside the rendered chat
+    generate_mask: False
+    # Apply sharpening filter (smartblur) to the render.
+    # Works best with font_size >= 24.
+    sharpening: False
+    # Output framerate of the render
+    framerate: 30
+    # Time (in seconds) between chat render updates
+    update_rate: 0.2
+    # Comma_separated list of usernames / words / phrases to ignore (case-insensitive)
+    ignore_users: ""
+    ban_words: ""
+
+    # Bitmask of badge types to filter out
+    # Add values together to filter multiple:
+    # Other=1, Broadcaster=2, Moderator=4, VIP=8,
+    # Subscriber=16, Predictions=32, NoAudioVisual=64, PrimeGaming=128
+    badge_filter: 0
+
+    # Attempt to restore real message timing using metadata
+    # Requires update_rate < 1.0 for best results
+    dispersion: False
+    # Render user avatars next to usernames and badges
+    avatars: False
+    # Render offline using only embedded emotes/badges/bits
+    offline: False
+
+    # Emoji vendor for rendering.
+    # [twitter/twemoji, google/notocolor, none]
+    emoji_vendor: "notocolor"
+
+    # Skip waiting for drive ready signal between frames.
+    # Can improve speed by 1–5%.
+    skip_drive_waiting: False
+
+    # Scale factors for emotes, badges, emoji and avatar images
+    scale_emote: 1.0
+    scale_badge: 1.0
+    scale_emoji: 1.0
+    scale_avatar: 1.0
+    # Scale Padding
+    scale_vertical: 1.0
+    scale_side_padding: 1.0
+    # Scale section height of comments
+    scale_section_height: 1.0
+    # Scale spacing between words
+    scale_word_space: 1.0
+    # Scale spacing between emotes
+    scale_emote_space: 1.0
+    # Scale highlight stroke size (sub messages)
+    scale_highlight_stroke: 1.0
+    # Scale highlight indent size (sub messages)
+    scale_highlight_indent: 1.0
+
+    # FFmpeg input arguments for chat rendering.
+    # {fps}, {max_int}, {width}, {height} are placeholders replaced at runtime.
+    input_args: "-framerate {fps} -f rawvideo -analyzeduration {max_int} -probesize {max_int} -pix_fmt bgra -video_size {width}x{height} -i -"
+    # FFmpeg output arguments for chat rendering.
+    # {save_path} is replaced at runtime.
+    output_args: "-c:v libx264 -preset veryfast -crf 18 -pix_fmt yuv420p \"{save_path}\""
+
+websocket:
+  # [Min 10; Max 600]
+  keepalive_timeout_seconds: 600
+  # Toggle for websocket debug tracing; [True/False]
+  disable_websockets_client_debug_logging: False
+  
