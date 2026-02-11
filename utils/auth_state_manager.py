@@ -1,118 +1,215 @@
 import json
 import os
 import time
-from utils.log_util import get_logger
 import datetime
+from typing import Any, Optional
+from utils.log_util import get_logger
 from utils.project_definitions import STATE_DIR
+
 logger = get_logger(__name__)
 
 AUTH_STATE_FILE_PATH = os.path.join(STATE_DIR, "auth.json")
 
-def get_info(info_name:str):
+
+def load_auth_state() -> Optional[dict]:
+  """Load authentication state from JSON file.
+  
+  Returns:
+    dict: The auth state dictionary, or None if file doesn't exist or is invalid.
+  """
+  if not os.path.exists(AUTH_STATE_FILE_PATH):
+    logger.error(f"Auth state file not found at {AUTH_STATE_FILE_PATH}")
+    return None
+  
+  try:
+    with open(AUTH_STATE_FILE_PATH, "r") as f:
+      return json.load(f)
+  except (json.JSONDecodeError, IOError) as e:
+    logger.error(f"Failed to load auth state: {e}")
+    return None
+
+
+def _save_auth_state(auth_state: dict) -> None:
+  """Save auth state to file."""
+  try:
+    with open(AUTH_STATE_FILE_PATH, "w") as f:
+      json.dump(auth_state, f)
+  except IOError as e:
+    logger.error(f"Failed to save auth state: {e}")
+
+
+def get_info(info_name: str) -> Optional[Any]:
+  """Retrieve a value from the auth state.
+  
+  Args:
+    info_name: The key to retrieve from auth state.
+    
+  Returns:
+    The value if found, None otherwise.
+  """
   auth_state = load_auth_state()
   
   if auth_state is None:
-    logger.error("Auth state is empty")
-    return
+    logger.error("Auth state is empty or invalid")
+    return None
 
   info = auth_state.get(info_name)
   if info is None:
-    logger.error(f"{info_name} not found")
-    return
-  logger.debug(f"Got {info}")
+    logger.warning(f"Auth field '{info_name}' not found")
+    return None
+  
+  logger.debug(f"Retrieved '{info_name}' from auth state")
   return info
-def set_info(info_name, info):
+
+
+def set_info(info_name: str, info: Any) -> bool:
+  """Set a value in the auth state.
+  
+  Args:
+    info_name: The key to set in auth state.
+    info: The value to set.
+    
+  Returns:
+    True if successful, False otherwise.
+  """
   auth_state = load_auth_state()
   
   if auth_state is None:
-    logger.error("Auth state is empty")
-    return
+    logger.error("Cannot set auth field: auth state is empty or invalid")
+    return False
 
   auth_state[info_name] = info
-  with open(AUTH_STATE_FILE_PATH, "w") as f:
-    logger.debug(f"Setting {info_name} to {info}")
-    json.dump(auth_state, f)
+  _save_auth_state(auth_state)
+  logger.debug(f"Set '{info_name}' in auth state")
+  return True
 
-def load_auth_state():
-  if not os.path.exists(AUTH_STATE_FILE_PATH):
-    logger.error("Auth state file not found")
-    return None
-  with open(AUTH_STATE_FILE_PATH, "r") as f:
-    return json.load(f)
 
-# access token
-def get_access_token():
-  logger.info("Retriveing access token...")
+# ============================================================================
+# Concrete getter/setter functions with logging and type hints
+# ============================================================================
+
+def get_access_token() -> Optional[str]:
+  """Get the access token."""
+  logger.debug("Retrieving access token")
   return get_info("access_token")
-def set_access_token(access_token: str):
-  logger.info("Setting access token...")
-  set_info("access_token", access_token)
 
-# refresh token
-def get_refresh_token():
-  logger.info("Retrieving access token...")
+
+def set_access_token(access_token: str) -> bool:
+  """Set the access token."""
+  logger.debug("Setting access token")
+  return set_info("access_token", access_token)
+
+
+def get_refresh_token() -> Optional[str]:
+  """Get the refresh token."""
+  logger.debug("Retrieving refresh token")
   return get_info("refresh_token")
-def set_refresh_token(refresh_token: str):
-  logger.info("Setting refresh token...")
-  set_info("refresh_token", refresh_token)
 
-# expires at
-def get_expires_in():
-  logger.info("Getting token expiration...")
+
+def set_refresh_token(refresh_token: str) -> bool:
+  """Set the refresh token."""
+  logger.debug("Setting refresh token")
+  return set_info("refresh_token", refresh_token)
+
+
+def get_expires_in() -> Optional[int]:
+  """Get token expiration time in seconds and log expiration details.
+  
+  Returns:
+    The number of seconds until token expires, or None if not available.
+  """
+  logger.debug("Retrieving token expiration")
   expiration_in_seconds = get_info("expires_in")
+  
+  if expiration_in_seconds is None:
+    logger.warning("Token expiration time not found")
+    return None
+  
   expiration_unix = int(time.time()) + expiration_in_seconds
   expire_delta = str(datetime.timedelta(seconds=expiration_in_seconds))
-  date = datetime.datetime.fromtimestamp(expiration_unix)
-  logger.info(f"Token expires in {str(expire_delta)}, {date} | [{expiration_unix}]")
+  expire_date = datetime.datetime.fromtimestamp(expiration_unix)
+  logger.info(f"Token expires in {expire_delta}, at {expire_date} (unix: {expiration_unix})")
+  
   return expiration_in_seconds
-def set_expires_in(expires_in: int):
-  logger.info("Setting token expiration...")
-  set_info("expires_in", expires_in)
 
-# scope
-def get_scope():
-  logger.info("Retrieving scopes...")
+
+def set_expires_in(expires_in: int) -> bool:
+  """Set token expiration time in seconds."""
+  logger.debug("Setting token expiration")
+  return set_info("expires_in", expires_in)
+
+
+def get_scope() -> Optional[str]:
+  """Get the token scope."""
+  logger.debug("Retrieving token scope")
   return get_info("scope")
-def set_scope(scope: str):
-  logger.info("Setting scopes...")
-  set_info("scope", scope)
 
-# token type
-def get_token_type():
-  logger.info("Getting token type...")
+
+def set_scope(scope: str) -> bool:
+  """Set the token scope."""
+  logger.debug("Setting token scope")
+  return set_info("scope", scope)
+
+
+def get_token_type() -> Optional[str]:
+  """Get the token type."""
+  logger.debug("Retrieving token type")
   return get_info("token_type")
-def set_token_type(token_type: str):
-  logger.info("Getting token type...")
-  set_info("token_type", token_type)
 
-# user login
-def get_user_login():
-  logger.info("Getting user's name...")
+
+def set_token_type(token_type: str) -> bool:
+  """Set the token type."""
+  logger.debug("Setting token type")
+  return set_info("token_type", token_type)
+
+
+def get_user_login() -> Optional[str]:
+  """Get the user's login name."""
+  logger.debug("Retrieving user login")
   return get_info("login")
-def set_user_login(login:str):
-  logger.info("Setting user's name...")
-  set_info("login", login)
 
-# user id
-def get_user_id():
-  logger.info("Getting user id...")
+
+def set_user_login(login: str) -> bool:
+  """Set the user's login name."""
+  logger.debug("Setting user login")
+  return set_info("login", login)
+
+
+def get_user_id() -> Optional[str]:
+  """Get the user's ID."""
+  logger.debug("Retrieving user ID")
   return get_info("user_id")
-def set_user_id(user_id:str):
-  logger.info("Setting user id...")
-  set_info("user_id", user_id)
 
-# Save auth state to file
-def save_auth_state(auth_state: dict):
-  with open(AUTH_STATE_FILE_PATH, "w") as f:
-    json.dump(auth_state, f)
 
-def clear_auth_state():
+def set_user_id(user_id: str) -> bool:
+  """Set the user's ID."""
+  logger.debug("Setting user ID")
+  return set_info("user_id", user_id)
+
+
+def save_auth_state(auth_state: dict) -> None:
+  """Save auth state to file."""
+  _save_auth_state(auth_state)
+
+
+def clear_auth_state() -> None:
+  """Clear the auth state file."""
   if os.path.exists(AUTH_STATE_FILE_PATH):
-    os.remove(AUTH_STATE_FILE_PATH)
+    try:
+      os.remove(AUTH_STATE_FILE_PATH)
+      logger.info("Auth state cleared")
+    except OSError as e:
+      logger.error(f"Failed to clear auth state: {e}")
 
-# Check if auth state is expired
-def is_auth_state_expired():
+
+def is_auth_state_expired() -> bool:
+  """Check if the auth token is expired.
+  
+  Returns:
+    True if expired or not found, False if still valid.
+  """
   expires_in = get_expires_in()
   if expires_in is None:
+    logger.warning("Cannot determine expiration: expires_in not found")
     return True
   return time.time() > expires_in

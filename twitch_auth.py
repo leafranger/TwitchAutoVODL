@@ -54,6 +54,7 @@ def open_authorization_url(state: str) -> str:
     f"&scope=" # For stream.offline we don't need scopes
   )
   url = base + params
+  logger.debug(f"Opening auth url: {url}")
   webbrowser.open(url)
 
 # Exchange auth code for access and refresh tokens
@@ -116,7 +117,7 @@ def refresh_access_token(refresh_token: str):
   if response.status_code != 200:
     logger.error(f"Error refreshing access token: {response.status_code}")
     logger.error(response.text)
-    return None
+    return False
   logger.info("Access token refreshed")
   auth_state = {
     "access_token": response.json().get("access_token"),
@@ -126,6 +127,7 @@ def refresh_access_token(refresh_token: str):
     "token_type": response.json().get("token_type"),
   }
   auth.save_auth_state(auth_state)
+  return True
 
 def get_user_access_token():
   # Start local callback server

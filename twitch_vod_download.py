@@ -1,25 +1,38 @@
 import ast
-from datetime import datetime
-from nt import mkdir
 import os
 import re
 import subprocess
 import time
 import requests
 from utils.log_util import get_logger
+from utils.timestamps_converters import parse_iso_z
 logger = get_logger(__name__)
 from utils.config_manager import configs
 import utils.auth_state_manager as auth
 from twitch_auth import TWITCH_CLIENT_ID
-import utils.latest_stream_state_manager as last_stream
+from utils.streams_state_manager import StreamStateManager
 from utils.project_definitions import TWITCH_DL_CLI_DIR, FFMPEG_PATH_DIR, VODS_DIR
 
+Streams = StreamStateManager()
+
 def save_latest_stream_info(stream_info):
-  last_stream.set_stream_id(stream_info["id"])
-  last_stream.set_created_at(stream_info["created_at"])
+  Streams.add_stream(
+    stream_info["stream_id"],
+    {
+      "created_at" : stream_info["created_at"],
+      "status"     : "pending"
+    }
+  )
 
 def get_user_videos(broadcaster_id):
+  """Get the latest videos for a broadcaster.
   
+  Args:
+    broadcaster_id: The broadcaster's user ID.
+  
+  Returns:
+    List of video data dicts from Twitch API, or None if error.
+  """
   n_of_videos = configs["twitch"].vod_download.latest_vods_amount
   logger.debug(f"Fetching users latest {n_of_videos} videos")
   TWITCH_USER_VODS_URL = (
@@ -34,161 +47,239 @@ def get_user_videos(broadcaster_id):
   }
   try:
     response = requests.get(TWITCH_USER_VODS_URL, headers=headers, timeout=10)
-    return response.json().get("data")
+    videos = response.json().get("data", [])
+    
+    if videos:
+      logger.debug(f"API returned {len(videos)} videos - checking stream_id match:")
+      for v in videos:
+        logger.debug(
+          f"  video_id={v.get('id')}, stream_id={v.get('stream_id')}, "
+          f"type={v.get('type')}, viewable={v.get('viewable')}"
+        )
+    
+    return videos
   except Exception as e:
-    logger.error(f"Error getting latest [{broadcaster_id}]'s last {n_of_videos} videos")
-    logger.error(e)
+    logger.error(f"Error getting videos for [{broadcaster_id}]: {e}")
     return None
 
-def parse_iso_z(timestamp:str)->datetime:
-  # Keeping up to microseconds
-  if timestamp.endswith("Z"):
-    timestamp = timestamp[:-1] + "+00:00"
-  # Trimming fractional seconds
-  if "." in timestamp:
-    timestamp = timestamp.split(".",1)[0]+"Z"
-  return datetime.fromisoformat(timestamp)
-
-def timestamp_to_seconds(tmp:str)->int:
-  return int(datetime.timestamp(datetime.fromisoformat(tmp)))
-
-def get_timestamp_difference(timestamp_new:str, timestamp_old:str)->int:
-  dt1 = parse_iso_z(timestamp_new)
-  dt2 = parse_iso_z(timestamp_old)
-  delta = dt1-dt2
-  return int(delta.total_seconds())
-
-# # Given the latest videos, check if the latest is available
-# def check_if_video_published(time_of_event, broadcaster_id):
-#   logger.debug("Checking if video is published...")
-#   cfg = configs["twitch"].vod_download
-#   videos_data = get_user_videos(broadcaster_id)
-#   if not videos_data:
-#     return False
-
-#   # Get the latest video from the bunch  
-#   latest_video = None
-
-#   def save_video(video):
-#     return {
-#       "id": video["id"],
-#       "stream_id": video["stream_id"],
-#       "title": video["title"],
-#       "created_at": video["created_at"],
-#     }
-
-#   for video in videos_data:
-#     # logger.debug(f"Checking Video: {video["id"]}; Stream: {video["stream_id"]}; '{video["title"]}'")
-#     if video["type"] != "archive":
-#       logger.debug(f"Video {video["id"]} is not type archive"); break
-
-#     if video["viewable"] != "public":
-#       logger.debug(f"Video {video["id"]} is not public yet"); break
-
-#     if video["published_at"] == None:
-#       logger.debug(f"Video {video["id"]} not yet published"); break
-
-#     if video["stream_id"] == None:
-#       logger.debug(f"Video {video["id"]} is not a stream"); break
-
-#     if latest_video == None:
-#       logger.debug("First video set")
-#       latest_video=save_video(video)
-#     else:
-#       video_start_time = timestamp_to_seconds(video["created_at"])
-#       latest_video_start_time = timestamp_to_seconds(latest_video["created_at"])
-#       if video_start_time > latest_video_start_time:
-#         latest_video = save_video(video)   
+# Given the latest videos, check which are available
+def check_if_videos_published(broadcaster_id, target_stream_id=None):
+  """Check if videos are published for tracked streams.
   
-#   # Time difference betwwen websocket event and video publish timestamp
-#   time_difference = get_timestamp_difference(time_of_event, latest_video["published_at"])
-#   logger.debug(f"Difference between websocket event and video timestamp: {time_difference}")
-#   # Timespan in which the video was published since the websocket event
-#   availability_timespan = cfg.fetch_retry_cooldown * cfg.fetch_max_retries
-#   logger.debug(f"Max timespan of availability [CD: {cfg.fetch_retry_cooldown}; RE: {cfg.fetch_max_retries}]: {availability_timespan}")
-#   # Checking if video was published during check time
-#   if time_difference > availability_timespan:
-#     # Too much difference, video was published before websocket event
-#     return False
-#   else:
-#     # Video was 
-#     return True
-
-# Given the latest videos, check if the latest is available
-def check_if_video_published(broadcaster_id):
-  logger.debug("Checking if video is published...")
+  Args:
+    broadcaster_id: The broadcaster's user ID.
+    target_stream_id: Optional - check only this specific stream_id.
+                     If None, checks all tracked streams.
+  
+  Returns:
+    True if at least one valid video was found and video_id was set, False otherwise.
+  """
+  logger.debug("Checking if videos are published...")
+  
+  # Log what streams we're tracking
+  tracked_streams = list(Streams.list_streams().keys())
+  logger.debug(f"Currently tracking stream_ids: {tracked_streams}")
+  
   videos_data = get_user_videos(broadcaster_id)
   if not videos_data:
+    logger.warning("No videos returned from API")
     return False
 
-  # Check conresponding stream
-  latest_stream_id = last_stream.get_stream_id()
+  logger.debug(f"API returned {len(videos_data)} videos")
   is_stream_ready_for_download = False
 
-
   for video in videos_data:
-    # logger.debug(f"Checking Video: {video["id"]}; Stream: {video["stream_id"]}; '{video["title"]}'")
-    if video["stream_id"] == latest_stream_id:
-      logger.info("Latest stream found")
-      if video["type"] != "archive":
-        logger.warning(f"Video {video["id"]} is not type archive"); break
-
-      if video["viewable"] != "public":
-        logger.warning(f"Video {video["id"]} is not public yet"); break
-
-      if video["published_at"] == None:
-        logger.warning(f"Video {video["id"]} not yet published"); break
-
-      if video["stream_id"] == None:
-        logger.warning(f"Video {video["id"]} is not a stream"); break
-      is_stream_ready_for_download = True
-      last_stream.set_video_id(video["id"])
+    stream_id = video.get("stream_id")
+    video_id = video.get("id")
+    
+    logger.debug(
+      f"Checking video {video_id}: stream_id={stream_id}, "
+      f"type={video.get('type')}, viewable={video.get('viewable')}, "
+      f"published_at={video.get('published_at')}"
+    )
+    
+    # Skip if this stream isn't tracked, or if we're looking for a specific stream and this isn't it
+    if not Streams.has_stream(stream_id):
+      logger.debug(f"  → Video stream_id {stream_id} not in tracked streams {tracked_streams}")
+      continue
+    if target_stream_id and stream_id != target_stream_id:
+      logger.debug(f"  → Video stream_id {stream_id} doesn't match target {target_stream_id}")
+      continue
+    
+    # Stream is tracked, now check if video is valid for download
+    if video["type"] != "archive":
+      logger.debug(f"  → FAIL: Video type is '{video['type']}', not 'archive'")
+      continue
+    if video["viewable"] != "public":
+      logger.debug(f"  → FAIL: Video not public (viewable={video['viewable']})")
+      continue
+    if video["published_at"] is None:
+      logger.debug(f"  → FAIL: Video not yet published (published_at is None)")
+      continue
+    
+    # All checks passed, this video is ready
+    logger.info(f"✓ Video {video_id} ready for download (stream {stream_id})")
+    is_stream_ready_for_download = True
+    Streams.update_stream(stream_id, "video_id", video["id"])
+    
+    # If looking for specific stream, we can return now
+    if target_stream_id:
+      break
+      
   return is_stream_ready_for_download
 
-def is_video_downloadable(broadcaster_id):
+def is_video_downloadable(broadcaster_id, target_stream_id=None):
+  """Check if a video is available for download (with retries).
+  
+  Args:
+    broadcaster_id: The broadcaster's user ID.
+    target_stream_id: Optional - check only this specific stream_id.
+  
+  Returns:
+    True if video is ready for download, False if not available within retry limit.
+  """
   cfg = configs["twitch"].vod_download
   max_retries = cfg.fetch_max_retries
   cooldown = cfg.fetch_retry_cooldown
+
   for retry in range(max_retries):
-    logger.debug(f"Attempt #{retry+1}...")
-    is_video_available = check_if_video_published(broadcaster_id)
+    logger.debug(f"Attempt #{retry+1}/{max_retries}...")
+    is_video_available = check_if_videos_published(broadcaster_id, target_stream_id)
     if is_video_available:
-      
+      logger.debug("Video available for download, proceeding...")
       return True
     else:
-      logger.warning(f"Attempt #{retry+1} failed, next retry in {cooldown}s...")
-      time.sleep(cooldown)
-  logger.warning(f"Stream was not available for download in the latest {max_retries * cooldown} seconds")
+      if retry < max_retries - 1:
+        logger.debug(f"Video not ready, retrying in {cooldown}s... (attempt {retry+1}/{max_retries})")
+        time.sleep(cooldown)
+  
+  logger.warning(
+    f"Video not available for download after {max_retries} attempts "
+    f"({max_retries * cooldown}s total wait)"
+  )
   return False
 
-def download_latest_video(time_of_event, broadcaster_id, video_id):
-  # DEBUG
-  logger.debug("DEBUG ONLY, REMOVE LATER")
-  broadcaster_id = auth.get_user_id()
-  if is_video_downloadable(broadcaster_id=broadcaster_id):
-    # VOD Download
-    broadcaster = auth.get_user_login()
-    filename = f"{broadcaster}_{time_of_event}_{video_id}.mp4"
-    download_video(video_id, filename)
-
-    # Chat JSON Download
-
-    # Chat Render Download
+def download_latest_video(time_of_event, broadcaster_id, stream_id=None):
+  """Download the latest video for a stream.
   
+  Args:
+    time_of_event: ISO 8601 timestamp of when stream ended.
+    broadcaster_id: The broadcaster's user ID.
+    stream_id: Specific stream_id to download. If provided, will wait for this stream's video
+              to be published before downloading. If None, will download first available pending stream.
+  
+  Returns:
+    True if download completed successfully, False if video not available or download failed.
+  """
+  if not is_video_downloadable(broadcaster_id, stream_id):
+    logger.error(f"Video not downloadable for stream {stream_id}")
+    return False
 
+  # If stream_id provided, download only that one
+  if stream_id:
+    if not Streams.has_stream(stream_id):
+      logger.error(f"Stream {stream_id} not found in state manager")
+      return False
+    
+    stream_info = Streams.get_stream(stream_id)
+    if not stream_info:
+      logger.error(f"Cannot retrieve info for stream {stream_id}")
+      return False
+    
+    video_id = stream_info.get("video_id")
+    if not video_id:
+      logger.error(f"No video_id found for stream {stream_id}")
+      return False
+    
+    return _download_single_stream(stream_id, stream_info, time_of_event, video_id)
+  
+  # Otherwise download all pending streams
+  streams = Streams.list_streams()
+  pending_streams = [(sid, info) for sid, info in streams.items() if info.get("status") == "pending"]
+  
+  if not pending_streams:
+    logger.warning("No pending streams found to download")
+    return False
+  
+  all_successful = True
+  for stream_id, stream_info in pending_streams:
+    video_id = stream_info.get("video_id")
+    if not video_id:
+      logger.warning(f"No video_id for stream {stream_id}, skipping")
+      all_successful = False
+      continue
+    
+    success = _download_single_stream(stream_id, stream_info, time_of_event, video_id)
+    all_successful = all_successful and success
+  
+  return all_successful
+
+
+def _download_single_stream(stream_id: str, stream_info: dict, time_of_event: str, video_id: str) -> bool:
+  """Download a single stream's video, chat, and chat render.
+  
+  STREAM_ID vs VIDEO_ID:
+    stream_id: Used for state tracking (which streams handled)
+    video_id: Used for downloading (TwitchDownloader --id parameter)
+  
+  Args:
+    stream_id: The stream ID being downloaded.
+    stream_info: The stream info dict.
+    time_of_event: ISO 8601 timestamp of when stream ended.
+    video_id: The video ID to download.
+  
+  Returns:
+    True if all downloads succeeded, False otherwise.
+  """
+  broadcaster = auth.get_user_login()
+  parsed_time = parse_iso_z(time_of_event).strftime("%Y%m%d%H%M%S")
+  filename = f"{broadcaster}_{parsed_time}_{video_id}"
+  
+  logger.info(f"Download stream_id={stream_id} (tracking) video_id={video_id} (download)")
+  Streams.update_stream(stream_id, "status", "downloading")
+  
+  # Download video
+  success = download_video(video_id, filename)
+  if not success:
+    logger.error(f"Failed to download video for stream {stream_id}")
+    Streams.update_stream(stream_id, "status", "failed")
+    return False
+  
+  # Download chat
+  success = download_chat(video_id, filename)
+  if not success:
+    logger.error(f"Failed to download chat for stream {stream_id}")
+    Streams.update_stream(stream_id, "status", "failed")
+    return False
+  
+  # Render chat
+  success = download_chat_as_render(filename)
+  if not success:
+    logger.error(f"Failed to render chat for stream {stream_id}")
+    Streams.update_stream(stream_id, "status", "failed")
+    return False
+  
+  logger.info(f"Stream {stream_id} download completed successfully")
+  Streams.update_stream(stream_id, "status", "done")
+  return True
 
 # Remember to use video_id and not stream_id
 def download_video(
   video_id: str,
   filename: str,
 ):
-  # Video download
+  """Download VOD video file.
+  
+  Args:
+    video_id: The Twitch video ID (used for --id parameter).
+    filename: Output filename base.
+  """
   cfg = configs["twitch"].vod_download
   cmd = [
     os.path.join(TWITCH_DL_CLI_DIR, "TwitchDownloaderCLI.exe"),
     "videodownload",
     "--id", str(video_id),
-    "--output", os.path.join(VODS_DIR, f"{filename}.{cfg.vods.download_format}"),
+    "--output", os.path.join(VODS_DIR, filename, f"{filename}_vod.{cfg.vods.download_format}"),
     "--quality", cfg.vods.download_quality,
     "--threads", str(cfg.download_threads),
     "--bandwidth", str(cfg.max_thread_bandwidth),
@@ -260,7 +351,7 @@ def download_chat(
     os.path.join(TWITCH_DL_CLI_DIR, "TwitchDownloaderCLI.exe"),
     "chatdownload",
     "--id", str(video_id),
-    "--output", os.path.join(VODS_DIR, f"{filename}.{cfg.chat.download_format}"),
+    "--output", os.path.join(VODS_DIR, filename, f"{filename}_chat.{cfg.chat.download_format}"),
     "--compression", cfg.chat.compression,
     "--threads", str(cfg.download_threads),
     "--embed-images", str(cfg.chat.embed_images),
@@ -333,8 +424,8 @@ def download_chat_as_render(
   cmd = [
     os.path.join(TWITCH_DL_CLI_DIR, "TwitchDownloaderCLI.exe"),
     "chatrender",
-    "--input", os.path.join(VODS_DIR, f"{filename}.json"),
-    "--output", os.path.join(VODS_DIR, f"{filename}.mp4"),
+    "--input", os.path.join(VODS_DIR, filename, f"{filename}_chat.json"),
+    "--output", os.path.join(VODS_DIR, filename, f"{filename}_chat_render.mp4"),
 
     "--bttv", str(cfg.chat_render.bttv),
     "--ffz", str(cfg.chat_render.ffz),
@@ -467,7 +558,39 @@ def download_chat_as_render(
         logger.error(f"Unexpected error while rendering CHAT {filename}")
         logger.error(e)
         return False
-  
 
 
+# ============================================================================
+# Async wrapper for use with the download queue
+# ============================================================================
+
+async def download_latest_video_async(time_of_event, broadcaster_id, stream_id=None):
+  """Async wrapper for download_latest_video.
   
+  This function runs the synchronous download_latest_video in a thread pool
+  to prevent blocking the event loop during long downloads.
+  
+  Args:
+    time_of_event: ISO 8601 timestamp of when stream ended.
+    broadcaster_id: The broadcaster's user ID.
+    stream_id: Optional specific stream_id to download.
+  
+  Returns:
+    True if download was successful, False otherwise.
+  """
+  import asyncio
+  
+  loop = asyncio.get_event_loop()
+  try:
+    result = await loop.run_in_executor(
+      None,  # Use default thread pool
+      download_latest_video,
+      time_of_event,
+      broadcaster_id,
+      stream_id
+    )
+    return result
+  except Exception as e:
+    logger.error(f"Async download wrapper exception: {e}")
+    return False
+

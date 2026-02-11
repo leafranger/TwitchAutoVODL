@@ -14,7 +14,7 @@ TWITCH_REDIRECT_URI = os.getenv("TWITCH_REDIRECT_URI")
 def _parse_redirect_host_port_and_path(redirect_uri: str):
   # Defaults: host=localhost if missing; port=8080 if missing; path=/ if missing.
   if redirect_uri:
-    (f"Existing redirect uri: {redirect_uri}")
+    logger.warning(f"Existing redirect uri: {redirect_uri}")
   parsed = urllib.parse.urlparse(redirect_uri)
   host = parsed.hostname or "localhost"
   port = parsed.port or 8080
