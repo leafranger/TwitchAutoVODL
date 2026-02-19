@@ -9,11 +9,34 @@ from utils.timestamps_converters import parse_iso_z
 logger = get_logger(__name__)
 from utils.config_manager import configs
 import utils.auth_state_manager as auth
-from twitch_auth import TWITCH_CLIENT_ID
+from twitch_auth import TWITCH_CLIENT_ID, refresh_access_token
 from utils.streams_state_manager import StreamStateManager
 from utils.project_definitions import TWITCH_DL_CLI_DIR, FFMPEG_PATH_DIR, VODS_DIR
 
 Streams = StreamStateManager()
+
+def _ensure_token_valid():
+  """Check if access token is expired and refresh if needed.
+  
+  Returns:
+    True if token is valid after check/refresh, False if refresh failed.
+  """
+  if auth.is_auth_state_expired():
+    logger.warning("Access token has expired, attempting refresh...")
+    refresh_token = auth.get_refresh_token()
+    if not refresh_token:
+      logger.error("Cannot refresh: refresh token not found")
+      return False
+    
+    result = refresh_access_token(refresh_token)
+    if result is None:
+      logger.error("Failed to refresh access token")
+      return False
+    
+    logger.info("Token refreshed successfully")
+    return True
+  
+  return True
 
 def save_latest_stream_info(stream_info):
   Streams.add_stream(
@@ -33,6 +56,11 @@ def get_user_videos(broadcaster_id):
   Returns:
     List of video data dicts from Twitch API, or None if error.
   """
+  # Ensure token is still valid before making API call
+  if not _ensure_token_valid():
+    logger.error("Cannot proceed: access token is expired and refresh failed")
+    return None
+  
   n_of_videos = configs["twitch"].vod_download.latest_vods_amount
   logger.debug(f"Fetching users latest {n_of_videos} videos")
   TWITCH_USER_VODS_URL = (

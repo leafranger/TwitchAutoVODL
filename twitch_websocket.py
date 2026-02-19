@@ -7,6 +7,7 @@ from utils.config_manager import configs
 from utils.download_queue_manager import DownloadQueueManager, DownloadTask
 from twitch_vod_download import download_latest_video_async, Streams
 from twitch_auth import authenticate
+import utils.auth_state_manager as auth_manager
 
 logger = get_logger(__name__)
 
@@ -31,14 +32,14 @@ class TwitchEventSubWebSocket:
     self.reconnect_task = None
     self.reconnecting = False
     # Download queue
-    self.download_queue = DownloadQueueManager(max_concurrent_downloads=1)
+    self.download_queue = None
     self.queue_worker_task = None
     # Stream state manager (use shared singleton imported from twitch_vod_download)
     self.stream_manager = Streams
 
   async def start_connection(self):
     # Get max concurrent downloads from config
-    max_concurrent = configs["twitch"].vod_download.download_threads
+    max_concurrent = configs["twitch"].vod_download.max_concurrent_downloads
     self.download_queue = DownloadQueueManager(max_concurrent_downloads=max_concurrent)
     
     # Start the background download queue worker
@@ -120,7 +121,11 @@ class TwitchEventSubWebSocket:
             logger.info(f"Subscription created: {event_type}")
           elif resp.status == 401:
             logger.warning("Unauthorized access (token probably expired)")
-            authenticate()
+            # Refresh token asynchronously without blocking the event loop
+            await self._refresh_token_async()
+            # Retry subscription with new token
+            await asyncio.sleep(0.5)  # Small delay to ensure token is updated
+            await self._register_subscription(event_type)
           else:
             logger.error(
               f"Failed to create subscription {event_type} "
@@ -129,6 +134,18 @@ class TwitchEventSubWebSocket:
 
     except Exception as e:
       logger.error(f"Error registering subscription {event_type}: {e}")
+
+  async def _refresh_token_async(self):
+    """Asynchronously refresh the access token without blocking the event loop."""
+    try:
+      # Run authenticate in a thread pool to avoid blocking the event loop
+      loop = asyncio.get_event_loop()
+      await loop.run_in_executor(None, authenticate)
+      # Get the refreshed token from auth manager
+      self.token = auth_manager.get_access_token()
+      logger.info("Token refreshed successfully")
+    except Exception as e:
+      logger.error(f"Failed to refresh token asynchronously: {e}")
   
   async def _on_session_welcome(self, data):
     logger.info("Received welcome message")

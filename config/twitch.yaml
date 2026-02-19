@@ -2,19 +2,26 @@ twitch:
   # The amount of seconds that need to be left before refreshing token
   refresh_time_limit: 60
 
+  scopes:
+    -
+
   # Type of allowed streams; [live, playlist, watch_party, premiere, rerun]
   allowed_stream_types: 
     - live
+    # - playlist
+    # - watch_party
     - premiere
-    - watch_party
+    # - rerun
 
 vod_download:
   # Amount of latest videos to fetch (Reccomended min 3; max 10)
   latest_vods_amount: 5
   # Cooldown for retrying fetching videos; in seconds
-  fetch_retry_cooldown: 30
+  fetch_retry_cooldown: 60
   # Max attempts to retry fetching videos; 0 = infinite
-  fetch_max_retries: 10
+  fetch_max_retries: 15
+  # Max concurrent downloads
+  max_concurrent_downloads: 3
 
   # Number of parallel download threads. Large values may result in IP rate limiting
   download_threads: 4
@@ -147,5 +154,5 @@ websocket:
   # [Min 10; Max 600]
   keepalive_timeout_seconds: 600
   # Toggle for websocket debug tracing; [True/False]
-  disable_websockets_client_debug_logging: False
+  disable_websockets_client_debug_logging: True
   

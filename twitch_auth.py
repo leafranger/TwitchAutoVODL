@@ -2,7 +2,10 @@ import os
 import secrets
 import string
 import webbrowser
+from urllib.parse import urlencode
+
 import requests
+from requests.exceptions import RequestException
 from dotenv import load_dotenv
 import utils.auth_state_manager as auth
 from twitch_callback import TwitchCallbackServer
@@ -16,6 +19,11 @@ logger = get_logger(__name__)
 TWITCH_CLIENT_ID = os.getenv("TWITCH_CLIENT_ID")
 TWITCH_CLIENT_SECRET = os.getenv("TWITCH_CLIENT_SECRET")
 TWITCH_REDIRECT_URI = os.getenv("TWITCH_REDIRECT_URI")
+
+# Validate critical config at import time so failures are clear
+if not TWITCH_CLIENT_ID or not TWITCH_CLIENT_SECRET or not TWITCH_REDIRECT_URI:
+  logger.critical("Missing one or more required Twitch environment variables: TWITCH_CLIENT_ID, TWITCH_CLIENT_SECRET, TWITCH_REDIRECT_URI")
+  raise RuntimeError("Missing required Twitch environment variables. See README or config.")
 
 def authenticate():
   logger.debug("Starting authorization flow...") 
@@ -44,18 +52,20 @@ def _generate_state(length: int = 32) -> str:
   return "".join(secrets.choice(alphabet) for _ in range(length))
 
 def open_authorization_url(state: str) -> str:
-  # Build auth URL for grant flow
+  # Build auth URL for grant flow (URL-encoded)
   base = "https://id.twitch.tv/oauth2/authorize"
-  params = (
-    f"?response_type=code"
-    f"&client_id={TWITCH_CLIENT_ID}"
-    f"&redirect_uri={TWITCH_REDIRECT_URI}"
-    f"&state={state}"
-    f"&scope=" # For stream.offline we don't need scopes
-  )
-  url = base + params
+  scopes = configs["twitch"].twitch.scopes if configs.get("twitch") and hasattr(configs["twitch"], "twitch") and hasattr(configs["twitch"].twitch, "scopes") else ""
+  params = {
+    "response_type": "code",
+    "client_id": TWITCH_CLIENT_ID,
+    "redirect_uri": TWITCH_REDIRECT_URI,
+    "state": state,
+    "scopes": scopes,
+  }
+  url = f"{base}?{urlencode(params)}"
   logger.debug(f"Opening auth url: {url}")
   webbrowser.open(url)
+  return url
 
 # Exchange auth code for access and refresh tokens
 def _exchange_code_for_tokens(code: str):
@@ -67,9 +77,13 @@ def _exchange_code_for_tokens(code: str):
     "grant_type": "authorization_code",
     "redirect_uri": TWITCH_REDIRECT_URI,
   }
-  response = requests.post(TOKEN_URL, data=data, timeout=10)
-  response.raise_for_status()
-  return response.json()
+  try:
+    response = requests.post(TOKEN_URL, data=data, timeout=10)
+    response.raise_for_status()
+    return response.json()
+  except RequestException as e:
+    logger.error(f"Token exchange failed: {e}")
+    return None
 
 # Check if the access token is valid
 def validate_access_token(access_token: str):
@@ -78,13 +92,18 @@ def validate_access_token(access_token: str):
   headers = {
     "Authorization": f"OAuth {access_token}"
   }
-  response = requests.get(VALIDATION_URL, headers=headers, timeout=10)
+  try:
+    response = requests.get(VALIDATION_URL, headers=headers, timeout=10)
+  except RequestException as e:
+    logger.error(f"Error checking access token: {e}")
+    return False
   # Check for errors
   if response.status_code != 200:
     logger.error(f"Error checking access token: {response.status_code}")
     logger.error(response.text)
     return False
-  expiration = response.json().get("expires_in")
+  json_resp = response.json()
+  expiration = json_resp.get("expires_in")
   # Checking for min time of expiration (expires soon)
   if expiration < configs["twitch"].twitch.refresh_time_limit:
     logger.warning(f"Token is about to expire, {expiration}s left")
@@ -96,9 +115,9 @@ def validate_access_token(access_token: str):
   auth.get_expires_in()
   
   # Set user info
-  auth.set_user_id(response.json().get("user_id"))
-  auth.set_user_login(response.json().get("login"))
-  return response.json()
+  auth.set_user_id(json_resp.get("user_id"))
+  auth.set_user_login(json_resp.get("login"))
+  return json_resp
 
 # Refresh access token
 def refresh_access_token(refresh_token: str):
@@ -113,21 +132,26 @@ def refresh_access_token(refresh_token: str):
   headers = {
     "Content-Type": "application/x-www-form-urlencoded"
   }
-  response = requests.post(REFRESH_URL, data=data, headers=headers, timeout=10)
+  try:
+    response = requests.post(REFRESH_URL, data=data, headers=headers, timeout=10)
+  except RequestException as e:
+    logger.error(f"Error refreshing access token: {e}")
+    return None
   if response.status_code != 200:
     logger.error(f"Error refreshing access token: {response.status_code}")
     logger.error(response.text)
-    return False
+    return None
   logger.info("Access token refreshed")
-  auth_state = {
-    "access_token": response.json().get("access_token"),
-    "refresh_token": response.json().get("refresh_token"),
-    "scope": response.json().get("scope"),
-    "expires_in": response.json().get("expires_in"),
-    "token_type": response.json().get("token_type"),
-  }
-  auth.save_auth_state(auth_state)
-  return True
+  json_resp = response.json()
+  
+  # Save auth state using setters to ensure proper conversion
+  auth.set_access_token(json_resp.get("access_token"))
+  auth.set_refresh_token(json_resp.get("refresh_token"))
+  auth.set_scope(json_resp.get("scope"))
+  auth.set_expires_in(json_resp.get("expires_in"))  # This converts to expires_at
+  auth.set_token_type(json_resp.get("token_type"))
+  
+  return json_resp
 
 def get_user_access_token():
   # Start local callback server
@@ -139,8 +163,10 @@ def get_user_access_token():
   open_authorization_url(state)
 
   # Wait for authorization code
-  code, error = callback_server.wait_for_code()
-  callback_server.stop()
+  try:
+    code, error = callback_server.wait_for_code()
+  finally:
+    callback_server.stop()
 
   if error:
     raise RuntimeError(f"Twitch authorization failed: {error}")
@@ -149,14 +175,13 @@ def get_user_access_token():
 
   # Exchange code for access/refresh tokens
   token_data = _exchange_code_for_tokens(code)
-  auth_state = {
-    "access_token": token_data.get("access_token"),
-    "refresh_token": token_data.get("refresh_token"),
-    "scope": token_data.get("scope"),
-    "expires_in": token_data.get("expires_in"),
-    "token_type": token_data.get("token_type"),
-  }
-  auth.save_auth_state(auth_state)
+  
+  # Save auth state using setters to ensure proper conversion
+  auth.set_access_token(token_data.get("access_token"))
+  auth.set_refresh_token(token_data.get("refresh_token"))
+  auth.set_scope(token_data.get("scope"))
+  auth.set_expires_in(token_data.get("expires_in"))  # This converts to expires_at
+  auth.set_token_type(token_data.get("token_type"))
 
 
 if __name__ == "__main__":

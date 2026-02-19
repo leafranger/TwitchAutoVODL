@@ -119,24 +119,41 @@ def get_expires_in() -> Optional[int]:
     The number of seconds until token expires, or None if not available.
   """
   logger.debug("Retrieving token expiration")
-  expiration_in_seconds = get_info("expires_in")
+  expires_at = get_info("expires_at")
   
-  if expiration_in_seconds is None:
-    logger.warning("Token expiration time not found")
+  if expires_at is None:
+    logger.warning("Token expiration timestamp not found")
     return None
   
-  expiration_unix = int(time.time()) + expiration_in_seconds
+  # Calculate remaining time
+  current_time = int(time.time())
+  expiration_in_seconds = expires_at - current_time
+  
+  # If already expired, return 0
+  if expiration_in_seconds < 0:
+    logger.warning("Token has already expired")
+    return 0
+  
   expire_delta = str(datetime.timedelta(seconds=expiration_in_seconds))
-  expire_date = datetime.datetime.fromtimestamp(expiration_unix)
-  logger.info(f"Token expires in {expire_delta}, at {expire_date} (unix: {expiration_unix})")
+  expire_date = datetime.datetime.fromtimestamp(expires_at)
+  logger.info(f"Token expires in {expire_delta}, at {expire_date} (unix: {expires_at})")
   
   return expiration_in_seconds
 
 
 def set_expires_in(expires_in: int) -> bool:
-  """Set token expiration time in seconds."""
+  """Set token expiration time in seconds (converts to absolute timestamp).
+  
+  Args:
+    expires_in: Duration in seconds until token expires
+    
+  Returns:
+    True if successful, False otherwise.
+  """
   logger.debug("Setting token expiration")
-  return set_info("expires_in", expires_in)
+  # Convert relative time to absolute timestamp
+  expires_at = int(time.time()) + expires_in
+  return set_info("expires_at", expires_at)
 
 
 def get_scope() -> Optional[str]:
@@ -212,4 +229,4 @@ def is_auth_state_expired() -> bool:
   if expires_in is None:
     logger.warning("Cannot determine expiration: expires_in not found")
     return True
-  return time.time() > expires_in
+  return expires_in <= 0
