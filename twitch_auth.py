@@ -35,7 +35,7 @@ def authenticate():
     token_validation = validate_access_token(access_token)
     # Refresh if needed
     if token_validation is False:
-      logger.debug("Last authorization expired, reshing...")
+      logger.debug("Last authorization expired, refreshing...")
       refresh_token = auth.get_refresh_token()
       refreshed = refresh_access_token(refresh_token)
       # If refresh token expired, user needs to login again
@@ -60,7 +60,7 @@ def open_authorization_url(state: str) -> str:
     "client_id": TWITCH_CLIENT_ID,
     "redirect_uri": TWITCH_REDIRECT_URI,
     "state": state,
-    "scopes": scopes,
+    "scope": scopes,
   }
   url = f"{base}?{urlencode(params)}"
   logger.debug(f"Opening auth url: {url}")
