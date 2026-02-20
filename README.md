@@ -1,4 +1,4 @@
-# TwitchAutoVOD
+# TwitchAutoVODL
 
 ![License](https://img.shields.io/badge/license-GPL%203.0-blue.svg)
 ![Version](https://img.shields.io/badge/version-1.0--alpha-orange.svg)
@@ -6,7 +6,7 @@
 
 > Download your Twitch VODs and chat when you finish streaming
 
-TwitchAutoVOD monitors your Twitch channel and downloads your VODs with chat messages when you go offline. You won't lose content before it expires.
+TwitchAutoVODL monitors your Twitch channel and downloads your VODs with chat messages when you go offline. You won't lose content before it expires.
 
 ## Features
 
@@ -29,8 +29,8 @@ You need:
 1. Clone the repository:
 
    ```bash
-   git clone https://github.com/yourusername/TwitchAutoVOD.git
-   cd TwitchAutoVOD
+   git clone https://github.com/leafranger/TwitchAutoVODL.git
+   cd TwitchAutoVODL
    ```
 
 2. Install dependencies:
@@ -119,7 +119,7 @@ You can customize the app behavior by editing the YAML files in the `config/` di
 ## Project Structure
 
 ```
-TwitchAutoVOD/
+TwitchAutoVODL/
 ├── twitch_auto_vodl.py          Main entry point
 ├── twitch_auth.py               OAuth authentication handler
 ├── twitch_callback.py           OAuth callback server
@@ -187,6 +187,6 @@ You can use, modify, and distribute this software. Any derivative works must als
 
 If you have issues or questions:
 
-- Check existing [Issues](https://github.com/yourusername/TwitchAutoVOD/issues)
+- Check existing [Issues](https://github.com/leafranger/TwitchAutoVODL/issues)
 - Open a new issue with details about your problem
 - Make sure you use the latest version of the code
