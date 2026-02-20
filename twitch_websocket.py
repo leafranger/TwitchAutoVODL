@@ -13,10 +13,6 @@ logger = get_logger(__name__)
 
 
 
-#\LOCAL WS
-EVENTSUB_WS_URL = f"ws://127.0.0.1:8080/ws?keepalive_timeout_seconds={configs['twitch'].websocket.keepalive_timeout_seconds}"
-EVENTSUB_API_URL = "http://localhost:8080/eventsub/subscriptions"
-
 # Real Websocket addresses
 EVENTSUB_WS_URL  = f"wss://eventsub.wss.twitch.tv/ws?keepalive_timeout_seconds={configs['twitch'].websocket.keepalive_timeout_seconds}"
 EVENTSUB_API_URL =  "https://api.twitch.tv/helix/eventsub/subscriptions"
@@ -292,7 +288,8 @@ class TwitchEventSubWebSocket:
             self.ws = new_ws
             self.reconnecting = False
             return
-        await self._handle_message(data)
+
+          await self._handle_message(data)
     except Exception as e:
       logger.error(f"Reconnect socket failed: {e}")
       self.reconnecting = False
